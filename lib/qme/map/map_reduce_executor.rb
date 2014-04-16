@@ -109,7 +109,7 @@ module QME
       # for the measure. The totals are placed in a document in the query_cache
       # collection.
       # @return [Hash] measure groups (like numerator) as keys, counts as values
-      def count_records_in_measure_groups
+      def count_records_in_measure_groups(full_numer=0, full_denom=0)
         pipeline = build_query
 
         pipeline << {'$group' => {
@@ -146,6 +146,7 @@ module QME
         # result['exclusions'] += get_db['patient_cache'].find(base_query.merge({'value.manual_exclusion'=>true})).count
         result.merge!(execution_time: (Time.now.to_i - @parameter_values['start_time'].to_i)) if @parameter_values['start_time']
         result[:supplemental_data] = self.calculate_supplemental_data_elements
+        result.merge!(:full_numer => full_numer, :full_denom => full_denom)
         get_db()["query_cache"].insert(result)
         get_db().command({:getLastError => 1}) # make sure last insert finished before we continue
         result

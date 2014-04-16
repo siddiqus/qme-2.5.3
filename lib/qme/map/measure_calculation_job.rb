@@ -11,6 +11,7 @@ module QME
     # When a measure needs calculation, the job will create a QME::MapReduce::Executor and interact with it to calculate
     # the report.
     class MeasureCalculationJob
+      include DatabaseAccess
       attr_accessor :test_id, :measure_id, :sub_id, :effective_date, :filters
 
       def initialize(options)
@@ -20,7 +21,31 @@ module QME
       end
       
       def perform
+        full_options = @options.deep_dup
+#        provider_list = get_db()['providers'].find(:last_name => "Adams RES") #.distinct("_id").map {|x| x.to_s}
+				full_options.merge!({:filters => {:providers => nil}})
+        
         qr = QualityReport.new(@measure_id, @sub_id, @options)
+        fqr = QualityReport.new(@measure_id, @sub_id, full_options)
+        
+        # aggregate calculation
+        if fqr.calculated?
+          completed("#{@measure_id}#{@sub_id} aggregate has already been calculated")
+          fresult = fqr.result
+        else
+          fmap = QME::MapReduce::Executor.new(@measure_id, @sub_id, full_options.merge('start_time' => Time.now.to_i))
+          if !fqr.patients_cached?
+            tick('Starting Full MapReduce')
+            fmap.map_records_into_measure_groups
+            tick('Full MapReduce complete')
+          end
+          
+          tick('Calculating group totals for aggregate')
+          fresult = fmap.count_records_in_measure_groups
+          completed("#{@measure_id}#{@sub_id}: p#{fresult[QME::QualityReport::POPULATION]}, d#{fresult[QME::QualityReport::DENOMINATOR]}, n#{fresult[QME::QualityReport::NUMERATOR]}, excl#{fresult[QME::QualityReport::EXCLUSIONS]}, excep#{fresult[QME::QualityReport::EXCEPTIONS]}")
+        end
+        
+        # main calculation
         if qr.calculated?
           completed("#{@measure_id}#{@sub_id} has already been calculated")
         else
@@ -32,9 +57,10 @@ module QME
           end
           
           tick('Calculating group totals')
-          result = map.count_records_in_measure_groups
+          result = map.count_records_in_measure_groups(fresult[QME::QualityReport::NUMERATOR], fresult[QME::QualityReport::DENOMINATOR])
           completed("#{@measure_id}#{@sub_id}: p#{result[QME::QualityReport::POPULATION]}, d#{result[QME::QualityReport::DENOMINATOR]}, n#{result[QME::QualityReport::NUMERATOR]}, excl#{result[QME::QualityReport::EXCLUSIONS]}, excep#{result[QME::QualityReport::EXCEPTIONS]}")
         end
+        result
       end
 
       def completed(message)
